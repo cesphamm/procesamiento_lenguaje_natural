@@ -135,10 +135,10 @@ Construcción de un **traductor automático inglés-español** utilizando una ar
    - Cambiar la estrategia de generación implementando muestreo aleatorio y beam search estocástico.
 
 ### Solución
-- **Dataset**: 10,000 pares de oraciones inglés-español del Tatoeba Project (de ~120,000 disponibles).
+- **Dataset**: **118,964 pares de oraciones** inglés-español del Tatoeba Project (dataset completo).
 - **Vocabulario**: 
-  - Inglés: 4,948 palabras (entrada máx: 16 tokens)
-  - Español: 7,731 palabras (salida máx: 18 tokens)
+  - Inglés: **13,524 palabras** (entrada máx: 47 tokens, truncado a 16)
+  - Español: **26,341 palabras** (salida máx: 50 tokens, truncado a 18)
 - **Embeddings**: GloVe pre-entrenados (50 dimensiones) para el encoder, embeddings entrenables para el decoder.
 - **Tokens especiales**: `<sos>` (start of sequence), `<eos>` (end of sequence).
 
@@ -146,36 +146,54 @@ Construcción de un **traductor automático inglés-español** utilizando una ar
 - **Encoder**: Embedding (GloVe) + LSTM que produce estados (h, c)
 - **Decoder**: Embedding entrenable + LSTM + Dense con softmax
 
+**Optimización de memoria:**
+
+Para poder utilizar el dataset completo (~119K oraciones) se implementaron dos estrategias:
+
+| Estrategia | Descripción | Ventaja |
+|------------|-------------|---------|
+| **DataGenerator** | Genera one-hot encoding por batch on-the-fly | Reduce uso de RAM significativamente |
+| **create_tf_dataset** | Pipeline tf.data con prefetching y paralelización | **18-20% más rápido** que DataGenerator |
+
 **Impacto de la cantidad de neuronas:**
 
-| Unidades LSTM | Val Accuracy | Val Loss | Observaciones |
-|:-------------:|:------------:|:--------:|---------------|
-| 64 | 72.6% | 1.69 | Entrenamiento rápido, menor capacidad |
-| **128** | **73.3%** | **1.65** | Mejor balance rendimiento/complejidad |
-| 256 | 74.2% | 1.60 | Mayor capacidad, más lento |
+| Unidades LSTM | Train Accuracy | Val Accuracy | Observaciones |
+|:-------------:|:--------------:|:------------:|---------------|
+| 64 | 84.38% | 78.20% | Entrenamiento rápido, menor capacidad |
+| 128 | 81.71% | 76.70% | Balance rendimiento/complejidad |
+| **256** | **84.80%** | **77.26%** | **Mejor rendimiento (seleccionado)** |
 
 **Estrategias de inferencia implementadas:**
 - **Greedy**: Selección del token más probable en cada paso.
-- **Muestreo aleatorio (sampling)**: Selección estocástica con temperatura ajustable.
-- **Beam Search estocástico**: Exploración de múltiples hipótesis con muestreo probabilístico.
+- **Beam Search estocástico**: Exploración de múltiples hipótesis con muestreo probabilístico y temperatura ajustable.
 
 ### Ejemplos de traducción
 
-| # | Entrada (Inglés) | Salida (Español) |
-|:-:|------------------|------------------|
-| 1 | "My mother say hi" | "mi madre dice hola" |
-| 2 | "Every end is a new beginning" | "cada fin es un nuevo comienzo" |
-| 3 | "The best of both worlds" | "lo mejor de ambos mundos" |
-| 4 | "I know what you mean" | "sé lo que quieres decir" |
-| 5 | "Give me a break" | "dame un descanso" |
+| Entrada (Inglés) | Greedy | Beam Search | Evaluación |
+|------------------|--------|-------------|------------|
+| "Happy new year!" | no te lo creerá | ¡feliz año | ✅ Beam Search superior |
+| "I know what you mean" | sé lo que me estás preguntando | sé lo que te refieres | ✅ Beam Search más preciso |
+| "Give me a break" | dame un respiro | dame un respiro | ✅ Ambas correctas |
+| "My mother say hi" | mi madre se ha ido | mi madre se casó | ⚠️ Identifica "madre" |
+| "Don't push it" | no lo subestimes | - | ⚠️ Contexto correcto |
 
 ### Conclusiones
-- El modelo con **128 unidades LSTM** ofrece el mejor balance entre rendimiento y complejidad.
-- **Impacto de las neuronas**: Aumentar de 64 a 256 unidades mejora el accuracy (~2%), pero incrementa significativamente el tiempo de entrenamiento.
-- El accuracy alcanzado (~73%) es prometedor, aunque las traducciones a veces pierden precisión semántica en oraciones complejas.
-- **Embeddings pre-entrenados**: GloVe mejoró la representación del encoder al capturar relaciones semánticas del inglés.
-- **Estrategias de generación**: Beam search estocástico con temperatura baja (0.1-0.2) produjo traducciones más variadas y naturales que greedy.
-- **Limitaciones**: Por restricciones de RAM, solo se usaron 10,000 de los ~120,000 pares disponibles. Se recomienda usar DataGenerator para escalar.
+
+**Rendimiento del modelo:**
+- El modelo con **256 unidades LSTM** obtuvo el mejor accuracy (84.80%) y fue seleccionado para inferencia.
+- El uso de **EarlyStopping** (patience=3) previno overfitting severo a pesar de la mayor capacidad del modelo.
+- **create_tf_dataset** resultó ~18-20% más rápido que DataGenerator gracias al prefetching asíncrono y one-hot encoding en GPU.
+
+**Estrategias de generación:**
+- **Beam Search con temperatura baja (0.1-0.2)** generalmente produce mejores traducciones al explorar múltiples caminos.
+- Hiperparámetros óptimos: `beam_width=3-5` y `temperature=0.1-0.2`.
+
+**Limitaciones identificadas:**
+- Frases complejas o fuera del dominio del entrenamiento generan traducciones incorrectas.
+- El modelo usa "Tom" como comodín cuando no encuentra traducción adecuada (sesgo del dataset Tatoeba que contiene muchas oraciones con "Tom").
+- Dificultad con expresiones idiomáticas y frases largas.
+
+**Embeddings pre-entrenados:** GloVe mejoró la representación del encoder al capturar relaciones semánticas del inglés sin requerir entrenamiento adicional.
 
 ---
 
@@ -201,10 +219,3 @@ Construcción de un **traductor automático inglés-español** utilizando una ar
 - **Gensim** - Word2Vec embeddings
 - **NumPy / Pandas** - Manipulación de datos
 - **Matplotlib / Seaborn** - Visualización
-
----
-
-## Autor
-
-**Carla Espínola Hamm**  
-Especialización en Inteligencia Artificial - FIUBA
